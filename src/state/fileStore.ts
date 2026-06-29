@@ -22,6 +22,21 @@ function isActive(state: MeetingRecordingState): boolean {
   return ACTIVE_STATES.includes(state);
 }
 
+/**
+ * A recordingId becomes a directory name under sessions/, so it must be a
+ * single safe path segment. recordingId may be caller-supplied (the plan's
+ * start_recording input), so reject anything that could escape sessionsDir:
+ * path separators, traversal segments, NUL, or empty/whitespace. Allow only a
+ * conservative id charset.
+ */
+const SAFE_RECORDING_ID = /^[A-Za-z0-9_-]{1,128}$/;
+
+function assertSafeRecordingId(recordingId: string): void {
+  if (!SAFE_RECORDING_ID.test(recordingId)) {
+    throw new DcRecError('recording_not_found', `invalid recordingId: ${JSON.stringify(recordingId)}`, { recordingId });
+  }
+}
+
 export class FileMeetingStateStore implements MeetingStateStore {
   private readonly sessionsDir: string;
 
@@ -35,14 +50,28 @@ export class FileMeetingStateStore implements MeetingStateStore {
     this.sessionsDir = path.join(runtimeDir, 'sessions');
   }
 
-  /** Absolute path to a recording's state file. Public so callers can surface `statusPath`. */
+  /**
+   * Absolute path to a recording's state file. Public so callers can surface
+   * `statusPath`. Validates the id first so a caller-supplied value can never
+   * traverse outside sessionsDir; as defence in depth, also asserts the joined
+   * path stays under sessionsDir.
+   */
   stateFilePath(recordingId: string): string {
-    return path.join(this.sessionsDir, recordingId, 'state.json');
+    assertSafeRecordingId(recordingId);
+    const dir = path.join(this.sessionsDir, recordingId);
+    const resolved = path.resolve(dir);
+    const root = path.resolve(this.sessionsDir);
+    if (resolved !== path.join(root, recordingId) || !resolved.startsWith(root + path.sep)) {
+      throw new DcRecError('recording_not_found', `invalid recordingId: ${JSON.stringify(recordingId)}`, { recordingId });
+    }
+    return path.join(dir, 'state.json');
   }
 
   async create(recording: MeetingRecording): Promise<MeetingRecording> {
-    const dir = path.join(this.sessionsDir, recording.recordingId);
-    const file = path.join(dir, 'state.json');
+    // stateFilePath validates recording.recordingId and guarantees the path
+    // stays under sessionsDir before we mkdir/write anything.
+    const file = this.stateFilePath(recording.recordingId);
+    const dir = path.dirname(file);
     mkdirSync(dir, { recursive: true });
     // Exclusive create: fail if a state file already exists for this id.
     try {

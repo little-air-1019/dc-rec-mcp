@@ -6,6 +6,7 @@
   "license": "ISC",
   "type": "commonjs",
   "main": "dist/index.js",
+  "packageManager": "pnpm@11.7.0",
   "scripts": {
     "typecheck": "tsc --noEmit",
     "lint": "eslint \"src/**/*.ts\"",
