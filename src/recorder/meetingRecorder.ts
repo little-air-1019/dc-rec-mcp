@@ -55,6 +55,14 @@ export class MeetingRecorder {
   private readonly craig: CraigRecordingAdapter;
   private readonly now: () => Date;
   private readonly generateId: () => string;
+  /**
+   * Per-guild serialization. start() for a given guild chains onto the prior
+   * start() so the active-check and the `connecting` create are atomic — two
+   * concurrent same-guild starts can't both pass the guard (TOCTOU). The plan's
+   * runtime topology is one MCP process per host, so an in-process lock is the
+   * right scope; store.create still guards recordingId uniqueness underneath.
+   */
+  private readonly guildLocks = new Map<string, Promise<unknown>>();
 
   constructor(deps: MeetingRecorderDeps) {
     this.store = deps.store;
@@ -63,11 +71,32 @@ export class MeetingRecorder {
     this.generateId = deps.generateId ?? generateRecordingId;
   }
 
+  /** Run `fn` in the guild's critical section, serialized against other starts. */
+  private async withGuildLock<T>(guildId: string, fn: () => Promise<T>): Promise<T> {
+    const prior = this.guildLocks.get(guildId) ?? Promise.resolve();
+    // Swallow the prior result/rejection so one start's failure doesn't reject
+    // the next; each start observes state via the store, not the chain value.
+    const run = prior.catch(() => undefined).then(fn);
+    this.guildLocks.set(guildId, run);
+    try {
+      return await run;
+    } finally {
+      // Clear only if no newer start has chained on, to avoid unbounded growth.
+      if (this.guildLocks.get(guildId) === run) this.guildLocks.delete(guildId);
+    }
+  }
+
   /**
    * Start a recording. Returns after Craig has reached the recording state.
    * Throws `already_recording` if the guild already has an active recording.
+   * The check-and-create is serialized per guild so concurrent same-guild
+   * starts cannot both succeed.
    */
   async start(input: StartRecordingInput): Promise<StartedRecording> {
+    return this.withGuildLock(input.guildId, () => this.startLocked(input));
+  }
+
+  private async startLocked(input: StartRecordingInput): Promise<StartedRecording> {
     // Per-guild guard: refuse if this guild already has an active recording.
     const existing = await this.store.get({ guildId: input.guildId });
     if (existing && isActive(existing.state)) {

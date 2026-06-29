@@ -113,6 +113,39 @@ describe('already_recording guard (one active per guild)', () => {
     });
   });
 
+  it('serializes concurrent same-guild starts so only one wins (TOCTOU)', async () => {
+    // Craig.start is slow, widening the window between the guard check and the
+    // `connecting` create — the exact race a non-atomic guard would lose.
+    const craig = new FakeCraigRecordingAdapter();
+    const slowStart = craig.start.bind(craig);
+    craig.start = async (ctx) => {
+      await new Promise((r) => setTimeout(r, 5));
+      return slowStart(ctx);
+    };
+    const recorder = new MeetingRecorder({ store, craig, now: () => new Date('2026-06-29T10:00:00.000Z') });
+
+    const results = await Promise.allSettled([
+      recorder.start(startInput({ guildId: 'gRace', recordingId: 'race-a' })),
+      recorder.start(startInput({ guildId: 'gRace', recordingId: 'race-b' }))
+    ]);
+
+    const fulfilled = results.filter((r) => r.status === 'fulfilled');
+    const rejected = results.filter((r) => r.status === 'rejected') as PromiseRejectedResult[];
+
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]?.reason).toMatchObject({ code: 'already_recording', details: { guildId: 'gRace' } });
+
+    // Craig was only ever started once for the guild.
+    expect(craig.startCalls).toHaveLength(1);
+
+    // Exactly one recording is active in the guild.
+    const all = await store.list();
+    const inGuild = all.filter((r) => r.guildId === 'gRace');
+    const active = inGuild.filter((r) => ['idle', 'connecting', 'recording', 'stopping'].includes(r.state));
+    expect(active).toHaveLength(1);
+  });
+
   it('allows concurrent recordings in different guilds', async () => {
     const { recorder } = makeRecorder();
     const a = await recorder.start(startInput({ guildId: 'gA', recordingId: 'a1' }));
