@@ -1,12 +1,18 @@
-// Tests for buildFacade() environment selection.
+// Tests for buildRuntime()/buildFacade() environment selection.
+//
+// Real-mode wiring is tested with an injected fake Discord deps factory so no
+// network connection happens and we can assert the lifecycle is constructed but
+// never connected during build.
 
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { buildFacade } from './boot';
+import type { Client } from 'eris';
+import { buildFacade, buildRuntime } from './boot';
+import type { DiscordDepsFactory, DiscordLifecycle } from '../recorder/discordLifecycle';
 import { FakeMeetingRecorder } from './fakeFacade';
 import { RealMeetingRecorderFacade } from './realFacade';
 
@@ -17,7 +23,6 @@ let cookPath: string;
 beforeEach(() => {
   runtimeDir = mkdtempSync(path.join(tmpdir(), 'dc-rec-boot-rt-'));
   outputRoot = mkdtempSync(path.join(tmpdir(), 'dc-rec-boot-out-'));
-  // An executable stub cook.sh so real-mode boot's executability check passes.
   cookPath = path.join(runtimeDir, 'cook.sh');
   writeFileSync(cookPath, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   chmodSync(cookPath, 0o755);
@@ -38,33 +43,67 @@ function realEnv(over: Record<string, string | undefined> = {}) {
   };
 }
 
+/** A fake Discord deps factory that never touches the network. */
+function fakeFactory() {
+  const connect = vi.fn().mockResolvedValue(undefined);
+  const ensureReady = vi.fn().mockResolvedValue(undefined);
+  const lifecycle: DiscordLifecycle = { connect, ensureReady, disconnect: vi.fn().mockResolvedValue(undefined), ready: false };
+  const createClient = vi.fn().mockReturnValue({} as unknown as Client);
+  const createLifecycle = vi.fn().mockReturnValue(lifecycle);
+  const factory: DiscordDepsFactory = { createClient, createLifecycle };
+  return { factory, lifecycle, connect, ensureReady, createClient, createLifecycle };
+}
+
 describe('fake mode', () => {
-  it('returns a FakeMeetingRecorder', () => {
-    expect(buildFacade({ DC_REC_TEST_MODE: 'fake' })).toBeInstanceOf(FakeMeetingRecorder);
+  it('returns a FakeMeetingRecorder and no lifecycle, never building a client', () => {
+    const { factory, createClient } = fakeFactory();
+    const rt = buildRuntime({ DC_REC_TEST_MODE: 'fake' }, factory);
+    expect(rt.facade).toBeInstanceOf(FakeMeetingRecorder);
+    expect(rt.lifecycle).toBeUndefined();
+    expect(createClient).not.toHaveBeenCalled();
+    // back-compat wrapper
+    expect(buildFacade({ DC_REC_TEST_MODE: 'fake' }, factory)).toBeInstanceOf(FakeMeetingRecorder);
   });
 });
 
 describe('real mode', () => {
-  it('builds a real facade when all config is present', () => {
-    expect(buildFacade(realEnv())).toBeInstanceOf(RealMeetingRecorderFacade);
+  it('builds a real facade + lifecycle and does NOT connect during build', () => {
+    const { factory, connect, ensureReady, createClient, createLifecycle } = fakeFactory();
+    const rt = buildRuntime(realEnv(), factory);
+    expect(rt.facade).toBeInstanceOf(RealMeetingRecorderFacade);
+    expect(rt.lifecycle).toBeDefined();
+    expect(createClient).toHaveBeenCalledOnce();
+    expect(createLifecycle).toHaveBeenCalledOnce();
+    // Build is network-free.
+    expect(connect).not.toHaveBeenCalled();
+    expect(ensureReady).not.toHaveBeenCalled();
   });
 
-  it('requires DC_REC_DISCORD_TOKEN', () => {
-    expect(() => buildFacade(realEnv({ DC_REC_DISCORD_TOKEN: undefined }))).toThrow(/DC_REC_DISCORD_TOKEN/);
+  it('accepts the plain DISCORD_BOT_TOKEN name too', () => {
+    const { factory } = fakeFactory();
+    const env = realEnv({ DC_REC_DISCORD_TOKEN: undefined, DISCORD_BOT_TOKEN: 'tok' });
+    expect(buildRuntime(env, factory).facade).toBeInstanceOf(RealMeetingRecorderFacade);
+  });
+
+  it('requires a token', () => {
+    const { factory } = fakeFactory();
+    expect(() => buildRuntime(realEnv({ DC_REC_DISCORD_TOKEN: undefined }), factory)).toThrow(/DISCORD/);
   });
 
   it('requires DC_REC_COOK_PATH with cook_binary_missing', () => {
+    const { factory } = fakeFactory();
     try {
-      buildFacade(realEnv({ DC_REC_COOK_PATH: undefined }));
+      buildRuntime(realEnv({ DC_REC_COOK_PATH: undefined }), factory);
       throw new Error('should have thrown');
     } catch (e) {
       expect((e as { code?: string }).code).toBe('cook_binary_missing');
     }
   });
 
-  it('fails boot with cook_binary_missing when cook.sh is a typo / not executable', () => {
+  it('fails with cook_binary_missing when cook.sh is a typo / not executable', () => {
+    const { factory } = fakeFactory();
     try {
-      buildFacade(realEnv({ DC_REC_COOK_PATH: path.join(runtimeDir, 'does-not-exist.sh') }));
+      buildRuntime(realEnv({ DC_REC_COOK_PATH: path.join(runtimeDir, 'does-not-exist.sh') }), factory);
       throw new Error('should have thrown');
     } catch (e) {
       expect((e as { code?: string }).code).toBe('cook_binary_missing');
@@ -72,14 +111,8 @@ describe('real mode', () => {
   });
 
   it('requires absolute runtime/output paths', () => {
-    expect(() => buildFacade(realEnv({ DC_REC_RUNTIME_DIR: 'relative' }))).toThrow(/absolute/);
-    expect(() => buildFacade(realEnv({ DC_REC_OUTPUT_ROOT: 'relative' }))).toThrow(/absolute/);
-  });
-
-  it('real-mode start fails loudly (live Eris adapter not wired)', async () => {
-    const facade = buildFacade(realEnv());
-    await expect(
-      facade.start({ guildId: 'g1', voiceChannelId: 'v1', requesterUserId: 'u1', textChannelId: 't1', type: 'stand-up', date: '2026-06-29' })
-    ).rejects.toMatchObject({ code: 'recording_not_active' });
+    const { factory } = fakeFactory();
+    expect(() => buildRuntime(realEnv({ DC_REC_RUNTIME_DIR: 'relative' }), factory)).toThrow(/absolute/);
+    expect(() => buildRuntime(realEnv({ DC_REC_OUTPUT_ROOT: 'relative' }), factory)).toThrow(/absolute/);
   });
 });

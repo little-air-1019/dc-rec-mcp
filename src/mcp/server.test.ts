@@ -147,17 +147,34 @@ describe('delegation + typed errors', () => {
 });
 
 describe('adapter has no Eris voice-lifecycle coupling', () => {
-  it('no file under src/mcp imports eris or Craig recorder internals', () => {
+  // Slice 5 acceptance: the MCP *adapter* (tool registration + result/error
+  // mapping + the facade contract) must contain no Eris voice-lifecycle. boot.ts
+  // is the composition root — it is *expected* to wire the real Eris stack
+  // together, so it is excluded here. The voice lifecycle itself lives in
+  // src/recorder/{erisCraigAdapter,discordLifecycle}.ts, not in these files.
+  it('no adapter file imports eris or Craig recorder internals', () => {
     const dir = __dirname;
-    const files = readdirSync(dir).filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts'));
-    const forbidden = /(^eris$|discord|recorder\/recording|modules\/recorder)/;
-    for (const file of files) {
+    const adapterFiles = readdirSync(dir).filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts') && f !== 'boot.ts');
+    const forbidden = /(^eris$|discord|recorder\/recording|modules\/recorder|erisCraigAdapter)/;
+    for (const file of adapterFiles) {
       const text = readFileSync(path.join(dir, file), 'utf8');
       const importRe = /\bfrom\s+['"]([^'"]+)['"]/g;
       let m: RegExpExecArray | null;
       while ((m = importRe.exec(text)) !== null) {
         expect(forbidden.test(m[1]!), `${file} imports forbidden "${m[1]}"`).toBe(false);
       }
+    }
+  });
+
+  it('boot.ts wires Eris only through the recorder modules, never inline voice logic', () => {
+    // Guard the exclusion above: boot may import the recorder wiring modules,
+    // but must not itself import eris directly or reach into Craig internals.
+    const text = readFileSync(path.join(__dirname, 'boot.ts'), 'utf8');
+    const importRe = /\bfrom\s+['"]([^'"]+)['"]/g;
+    let m: RegExpExecArray | null;
+    const bad = /(^eris$|modules\/recorder|recorder\/recording)/;
+    while ((m = importRe.exec(text)) !== null) {
+      expect(bad.test(m[1]!), `boot.ts imports forbidden "${m[1]}"`).toBe(false);
     }
   });
 });
