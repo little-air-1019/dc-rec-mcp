@@ -1,16 +1,27 @@
-// Boot selection: choose the facade implementation from the environment.
+// Boot selection: build the facade for the current environment.
 //
 //   DC_REC_TEST_MODE=fake  -> FakeMeetingRecorder (no Discord token; what the
 //                             validate.sh MCP smoke gate runs).
-//   otherwise              -> the real facade (MeetingRecorder + exporter over
-//                             a dedicated Discord bot). The Eris-backed Craig
-//                             adapter is deferred (post-Slice-6 hardening), so
-//                             the real branch validates config and throws a
-//                             clear diagnostic rather than pretending to record.
+//   otherwise              -> RealMeetingRecorderFacade wired with the real
+//                             state store, exporter, and RealCookRunner. The
+//                             live Discord (Eris) adapter is not built yet, so
+//                             a NotImplementedCraigAdapter is injected: export
+//                             and status of finalized recordings work, while
+//                             start/live-stop fail loudly and honestly. Wiring
+//                             the real Eris adapter is gated on the human-run
+//                             two-speaker Discord e2e (CLAUDE.md).
+
+import path from 'node:path';
 
 import { DcRecError } from '../domain/errors';
-import type { MeetingRecorderFacade } from './recorderPort';
+import { RecordingExporter } from '../export/recordingExporter';
+import { RealCookRunner } from '../export/realCook';
+import { MeetingRecorder } from '../recorder/meetingRecorder';
+import { NotImplementedCraigAdapter } from '../recorder/notImplementedCraig';
+import { FileMeetingStateStore } from '../state/fileStore';
 import { FakeMeetingRecorder } from './fakeFacade';
+import { RealMeetingRecorderFacade } from './realFacade';
+import type { MeetingRecorderFacade } from './recorderPort';
 
 export interface BootEnv {
   DC_REC_TEST_MODE?: string;
@@ -20,26 +31,39 @@ export interface BootEnv {
   DC_REC_COOK_PATH?: string;
 }
 
+function requireAbsolute(name: keyof BootEnv, value: string | undefined): string {
+  if (!value) throw new DcRecError('recording_not_found', `${name} is required in non-fake mode`);
+  if (!path.isAbsolute(value)) throw new DcRecError('recording_not_found', `${name} must be an absolute path, got: ${value}`);
+  return value;
+}
+
 /** Build the facade for the current environment. */
 export function buildFacade(env: BootEnv = process.env): MeetingRecorderFacade {
   if (env.DC_REC_TEST_MODE === 'fake') {
     return new FakeMeetingRecorder();
   }
 
-  // Real mode. Validate the configuration the real recorder will need, with the
-  // typed startup diagnostics the plan calls for. (Dedicated Discord token —
-  // open question #2 resolved 2026-06-30.)
+  // Real mode. Dedicated Discord token (open question #2, resolved 2026-06-30).
   if (!env.DC_REC_DISCORD_TOKEN) {
     throw new DcRecError('recording_not_found', 'DC_REC_DISCORD_TOKEN is required in non-fake mode');
   }
+  const runtimeDir = requireAbsolute('DC_REC_RUNTIME_DIR', env.DC_REC_RUNTIME_DIR);
+  const outputRoot = requireAbsolute('DC_REC_OUTPUT_ROOT', env.DC_REC_OUTPUT_ROOT);
   if (!env.DC_REC_COOK_PATH) {
     throw new DcRecError('cook_binary_missing', 'DC_REC_COOK_PATH is required in non-fake mode');
   }
+  const cookScriptPath = requireAbsolute('DC_REC_COOK_PATH', env.DC_REC_COOK_PATH);
 
-  // The Eris-backed Craig adapter is intentionally not wired in this slice.
-  // Until it lands, fail loudly instead of returning a half-real facade.
-  throw new DcRecError(
-    'recording_not_found',
-    'Real recorder is not wired yet. Run with DC_REC_TEST_MODE=fake, or wait for the Eris adapter (post-Slice-6).'
-  );
+  const store = new FileMeetingStateStore(runtimeDir);
+  // Live Discord recording is not wired yet; start/live-stop will fail loudly.
+  const craig = new NotImplementedCraigAdapter();
+  const recorder = new MeetingRecorder({ store, craig });
+  const cook = new RealCookRunner({ cookScriptPath });
+  const exporter = new RecordingExporter({
+    cook,
+    outputRoot,
+    usersFilePathFor: (rec) => path.join(runtimeDir, 'raw', `${rec.recordingId}.ogg.users`)
+  });
+
+  return new RealMeetingRecorderFacade({ recorder, exporter, store });
 }
