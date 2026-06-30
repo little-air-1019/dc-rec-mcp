@@ -1,1 +1,25 @@
 install.config
+
+# Never copy host build artifacts / deps into the image — they're rebuilt
+# inside (macOS-compiled binaries won't run on Linux anyway).
+node_modules
+dist
+.env
+.env.*
+.git
+
+# Host-compiled cook binaries (recompiled in-image via gcc).
+cook/oggtracks
+cook/oggcorrect
+cook/oggduration
+cook/oggmultiplexer
+cook/oggstender
+cook/extnotes
+cook/wavduration
+cook/*.png
+cook/*.exe
+cook/*.macosx
+
+# Runtime/output dirs if present locally
+.dc-rec-runtime
+.dc-rec-output

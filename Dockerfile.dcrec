@@ -1,0 +1,39 @@
+# Minimal Linux image to run dc-rec-mcp end-to-end (recording + cook export).
+# This is NOT Craig's Dockerfile (which runs install.sh + postgres/redis/etc).
+# dc-rec-mcp needs only Node 22, pnpm, and cook.sh's Linux audio toolchain.
+#
+# Build:  docker build -f Dockerfile.dcrec -t dc-rec-mcp:e2e .
+# Run:    see scripts/dcrec-e2e.sh  (or the README "Docker e2e" section)
+
+FROM node:22-bookworm
+
+# cook.sh's external tools. Our export uses `copy` (raw Ogg Opus passthrough),
+# which needs the C tools + zip/unzip + coreutils(timeout) + util-linux(flock).
+# ffmpeg/flac/opus-tools/lame/vorbis-tools are kept for cook's other formats but
+# are not on the `copy` path. fdkaac (AAC) is intentionally omitted: it's not a
+# Debian Bookworm package and the `copy` export never encodes AAC.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+    at build-essential ca-certificates coreutils ffmpeg flac gcc \
+    lame opus-tools util-linux vorbis-tools zip unzip \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN corepack enable && corepack prepare pnpm@11.7.0 --activate
+
+# Install deps + build dc-rec-mcp, and compile cook's C tools (no inkscape step).
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY tsconfig.json tsconfig.build.json ./
+COPY src ./src
+COPY scripts ./scripts
+COPY cook ./cook
+COPY cook.sh ./
+
+RUN pnpm install --frozen-lockfile \
+ && pnpm run build \
+ && cd cook && for i in *.c; do gcc -O3 -o "${i%.c}" "$i"; done
+
+# Token + DC_REC_* come from --env-file/-e at run time, never baked in.
+# Default command prints usage; the e2e passes an explicit `session ...`.
+CMD ["node", "scripts/recordDriver.mjs"]

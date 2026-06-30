@@ -70,8 +70,10 @@ export function createErisDepsFactory(): DiscordDepsFactory {
     createClient(token: string): Client {
       // eris is side-effect-free at import time (no sockets/handlers until the
       // VoiceConnection constructor / connect()), so a static import is safe.
+      // dysnomia (CraigChat fork) puts intents under `gateway`, not top-level.
+      // guilds + guildVoiceStates are what a record-only bot needs.
       return new Eris.Client(token, {
-        intents: ['guilds', 'guildVoiceStates'],
+        gateway: { intents: ['guilds', 'guildVoiceStates'] },
         restMode: true
       });
     },
