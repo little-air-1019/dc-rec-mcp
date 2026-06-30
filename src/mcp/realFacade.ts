@@ -1,7 +1,7 @@
 // The real facade: composes MeetingRecorder (recording lifecycle) and
 // RecordingExporter (cook -> per-speaker .ogg + manifest) into the four MCP
 // tool results. No MCP/JSON concerns here; no Eris here either — the live
-// Discord adapter is injected (NotImplementedCraigAdapter until the e2e lands).
+// Discord adapter (ErisCraigAdapter) is injected via MeetingRecorder.
 
 import { DcRecError } from '../domain/errors';
 import type { MeetingRecording, RecordingRef, Track } from '../domain/meeting';

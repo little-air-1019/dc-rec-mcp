@@ -1,3 +1,7 @@
+# dc-rec-mcp local e2e artifacts (may contain real recordings / PII)
+.dc-rec-runtime/
+.dc-rec-output/
+
 # dependencies
 node_modules/
 
