@@ -147,6 +147,19 @@ export class MeetingRecorder {
       throw err;
     }
 
+    // A stop() may have raced in and moved us out of `connecting` (it takes the
+    // same guild lock, but it can run between create and here only if it
+    // resolved before this start took the lock — defend anyway). Only promote
+    // to `recording` if we're still connecting; otherwise respect the newer
+    // state and just record the raw base.
+    const afterConnect = await this.store.get({ recordingId });
+    if (afterConnect && afterConnect.state !== 'connecting') {
+      const recording = await this.store.update(recordingId, {
+        rawCraigRecordingBase: craigResult.rawCraigRecordingBase
+      });
+      return { recording, statusPath: this.store.stateFilePath(recordingId) };
+    }
+
     const recording = await this.store.update(recordingId, {
       state: 'recording',
       rawCraigRecordingBase: craigResult.rawCraigRecordingBase
@@ -164,19 +177,35 @@ export class MeetingRecorder {
    * `recording_not_active` when the resolved recording is already terminal.
    */
   async stop(ref: RecordingRef): Promise<MeetingRecording> {
-    const current = await this.resolve(ref);
+    // Resolve once to learn the guild, then run the whole stop under that
+    // guild's lock so it can't interleave with a start() or a concurrent
+    // stop(). State is re-checked inside the lock (TOCTOU).
+    const resolved = await this.resolve(ref);
+    return this.withGuildLock(resolved.guildId, () => this.stopLocked(resolved.recordingId));
+  }
+
+  private async stopLocked(recordingId: string): Promise<MeetingRecording> {
+    // Re-read inside the lock: a concurrent stop may have already moved this to
+    // stopping/finalized, and a start may have just promoted it to recording.
+    const current = await this.resolve({ recordingId });
+    if (current.state === 'stopping') {
+      // Another stop is mid-flight (it holds, or held, the lock around its own
+      // craig.stop). Treat a second stop as a no-op-ish error rather than a
+      // duplicate adapter stop.
+      throw new DcRecError('recording_not_active', `recording ${recordingId} is already stopping`, { recordingId });
+    }
     if (!isActive(current.state)) {
-      throw new DcRecError('recording_not_active', `recording ${current.recordingId} is not active (state: ${current.state})`, {
-        recordingId: current.recordingId
+      throw new DcRecError('recording_not_active', `recording ${recordingId} is not active (state: ${current.state})`, {
+        recordingId
       });
     }
 
-    await this.store.update(current.recordingId, { state: 'stopping' });
+    await this.store.update(recordingId, { state: 'stopping' });
 
     // craig.stop resolves only after the writer is fully finalized.
-    await this.craig.stop(current.recordingId);
+    await this.craig.stop(recordingId);
 
-    return this.store.update(current.recordingId, {
+    return this.store.update(recordingId, {
       state: 'finalized',
       endedAt: this.now().toISOString()
     });

@@ -213,4 +213,61 @@ describe('stop', () => {
       code: 'recording_not_active'
     });
   });
+
+  it('serializes concurrent stops so craig.stop runs once', async () => {
+    // Slow craig.stop widens the window for a duplicate adapter stop.
+    const craig = new FakeCraigRecordingAdapter({
+      onStop: async () => {
+        await new Promise((r) => setTimeout(r, 5));
+      }
+    });
+    const recorder = new MeetingRecorder({ store, craig, now: () => new Date('2026-06-29T10:00:00.000Z') });
+    await recorder.start(startInput({ recordingId: 'rec1' }));
+
+    const results = await Promise.allSettled([recorder.stop({ recordingId: 'rec1' }), recorder.stop({ recordingId: 'rec1' })]);
+    const fulfilled = results.filter((r) => r.status === 'fulfilled');
+    const rejected = results.filter((r) => r.status === 'rejected') as PromiseRejectedResult[];
+
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]?.reason).toMatchObject({ code: 'recording_not_active' });
+    // The adapter was only stopped once.
+    expect(craig.stopCalls).toEqual(['rec1']);
+    expect(craig.finalizedStops).toEqual(['rec1']);
+  });
+
+  it('a stop racing a start does not leave an orphaned recording', async () => {
+    // start() holds the guild lock through craig.start; a same-guild stop
+    // chains after it. End state must be consistent (finalized), never a
+    // recording whose craig side was already stopped.
+    const craig = new FakeCraigRecordingAdapter({
+      onStop: async () => {
+        await new Promise((r) => setTimeout(r, 2));
+      }
+    });
+    const slowStart = craig.start.bind(craig);
+    craig.start = async (ctx) => {
+      await new Promise((r) => setTimeout(r, 5));
+      return slowStart(ctx);
+    };
+    const recorder = new MeetingRecorder({ store, craig, now: () => new Date('2026-06-29T10:00:00.000Z') });
+
+    const startP = recorder.start(startInput({ recordingId: 'rec1' }));
+    // Fire stop almost immediately, while start is still connecting.
+    const stopP = recorder.stop({ recordingId: 'rec1' }).catch((e) => e);
+
+    await startP;
+    const stopResult = await stopP;
+
+    const persisted = await store.get({ recordingId: 'rec1' });
+    // Either the stop won (finalized) or it errored as not-active, but the
+    // persisted state is never an orphaned "recording" with craig stopped.
+    if (stopResult instanceof Error) {
+      expect(persisted?.state).toBe('recording');
+      expect(craig.stopCalls).toEqual([]);
+    } else {
+      expect(persisted?.state).toBe('finalized');
+      expect(craig.stopCalls).toEqual(['rec1']);
+    }
+  });
 });

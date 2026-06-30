@@ -26,6 +26,13 @@ interface RawUser {
   id?: string;
   username?: string;
   discriminator?: string;
+  /**
+   * Discord display name. Craig's bot writer serializes the whole RecordingUser
+   * (recording.ts), so the file carries `globalName` (the modern display name).
+   * Older/download-side data used `name`; we accept either, preferring
+   * globalName.
+   */
+  globalName?: string | null;
   name?: string;
 }
 
@@ -42,12 +49,16 @@ export function parseUsersFile(text: string): CraigTrackUser[] {
     if (!raw || Object.keys(raw).length === 0) continue; // drop "0":{} and any empty entry
     const trackNo = Number(key);
     if (!Number.isInteger(trackNo)) continue;
+    // Prefer globalName (what Craig's bot writer emits), then name (older /
+    // download-side shape). Ignore null/empty so the exporter's username
+    // fallback still applies.
+    const displayName = raw.globalName || raw.name || undefined;
     users.push({
       trackNo,
       userId: raw.id ?? '',
       username: raw.username ?? '',
       discriminator: raw.discriminator ?? '',
-      ...(raw.name !== undefined ? { displayName: raw.name } : {})
+      ...(displayName !== undefined ? { displayName } : {})
     });
   }
 

@@ -27,4 +27,24 @@ describe('parseUsersFile', () => {
   it('returns an empty list when there are no real users', () => {
     expect(parseUsersFile('"0":{}')).toEqual([]);
   });
+
+  it('reads displayName from globalName (what Craig\'s bot writer emits)', () => {
+    const text = '"0":{}\n,"1":{"id":"123","username":"air","discriminator":"0","globalName":"Air Display","bot":false}';
+    expect(parseUsersFile(text)[0]).toMatchObject({ userId: '123', username: 'air', displayName: 'Air Display' });
+  });
+
+  it('prefers globalName over name when both are present', () => {
+    const text = '"0":{}\n,"1":{"id":"1","username":"u","discriminator":"0","globalName":"Global","name":"Legacy"}';
+    expect(parseUsersFile(text)[0]?.displayName).toBe('Global');
+  });
+
+  it('falls back to name when globalName is absent', () => {
+    const text = '"0":{}\n,"1":{"id":"1","username":"u","discriminator":"0","name":"Legacy"}';
+    expect(parseUsersFile(text)[0]?.displayName).toBe('Legacy');
+  });
+
+  it('ignores a null globalName (leaving displayName undefined)', () => {
+    const text = '"0":{}\n,"1":{"id":"1","username":"u","discriminator":"0","globalName":null}';
+    expect(parseUsersFile(text)[0]?.displayName).toBeUndefined();
+  });
 });
