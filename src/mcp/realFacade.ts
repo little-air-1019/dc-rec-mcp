@@ -99,6 +99,11 @@ export class RealMeetingRecorderFacade implements MeetingRecorderFacade {
         recordingId: input.recordingId
       });
     }
+    if (input.container !== 'directory') {
+      throw new DcRecError('invalid_export_format', `unsupported export container: ${input.container} (only directory is implemented)`, {
+        recordingId: input.recordingId
+      });
+    }
     if (input.mode !== 'multitrack') {
       throw new DcRecError('invalid_export_mode', `unsupported export mode: ${input.mode} (only multitrack is implemented)`, {
         recordingId: input.recordingId

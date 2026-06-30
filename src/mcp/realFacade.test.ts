@@ -115,6 +115,12 @@ describe('export', () => {
     });
   });
 
+  it('rejects unsupported containers with invalid_export_format', async () => {
+    await expect(facade.export({ recordingId: 'rec1', format: 'ogg-opus', container: 'zip', mode: 'multitrack' })).rejects.toMatchObject({
+      code: 'invalid_export_format'
+    });
+  });
+
   it('rejects unsupported modes with invalid_export_mode', async () => {
     await expect(facade.export({ recordingId: 'rec1', format: 'ogg-opus', container: 'directory', mode: 'mixdown' })).rejects.toMatchObject({
       code: 'invalid_export_mode'

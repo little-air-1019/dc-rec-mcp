@@ -1,6 +1,6 @@
 // Tests for buildFacade() environment selection.
 
-import { mkdtempSync, rmSync } from 'node:fs';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -12,10 +12,15 @@ import { RealMeetingRecorderFacade } from './realFacade';
 
 let runtimeDir: string;
 let outputRoot: string;
+let cookPath: string;
 
 beforeEach(() => {
   runtimeDir = mkdtempSync(path.join(tmpdir(), 'dc-rec-boot-rt-'));
   outputRoot = mkdtempSync(path.join(tmpdir(), 'dc-rec-boot-out-'));
+  // An executable stub cook.sh so real-mode boot's executability check passes.
+  cookPath = path.join(runtimeDir, 'cook.sh');
+  writeFileSync(cookPath, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  chmodSync(cookPath, 0o755);
 });
 
 afterEach(() => {
@@ -28,7 +33,7 @@ function realEnv(over: Record<string, string | undefined> = {}) {
     DC_REC_DISCORD_TOKEN: 'token',
     DC_REC_RUNTIME_DIR: runtimeDir,
     DC_REC_OUTPUT_ROOT: outputRoot,
-    DC_REC_COOK_PATH: path.join(runtimeDir, 'cook.sh'),
+    DC_REC_COOK_PATH: cookPath,
     ...over
   };
 }
@@ -51,6 +56,15 @@ describe('real mode', () => {
   it('requires DC_REC_COOK_PATH with cook_binary_missing', () => {
     try {
       buildFacade(realEnv({ DC_REC_COOK_PATH: undefined }));
+      throw new Error('should have thrown');
+    } catch (e) {
+      expect((e as { code?: string }).code).toBe('cook_binary_missing');
+    }
+  });
+
+  it('fails boot with cook_binary_missing when cook.sh is a typo / not executable', () => {
+    try {
+      buildFacade(realEnv({ DC_REC_COOK_PATH: path.join(runtimeDir, 'does-not-exist.sh') }));
       throw new Error('should have thrown');
     } catch (e) {
       expect((e as { code?: string }).code).toBe('cook_binary_missing');

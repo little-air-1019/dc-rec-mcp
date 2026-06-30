@@ -11,6 +11,7 @@
 //                             the real Eris adapter is gated on the human-run
 //                             two-speaker Discord e2e (CLAUDE.md).
 
+import { accessSync, constants as fsConstants } from 'node:fs';
 import path from 'node:path';
 
 import { DcRecError } from '../domain/errors';
@@ -53,16 +54,23 @@ export function buildFacade(env: BootEnv = process.env): MeetingRecorderFacade {
     throw new DcRecError('cook_binary_missing', 'DC_REC_COOK_PATH is required in non-fake mode');
   }
   const cookScriptPath = requireAbsolute('DC_REC_COOK_PATH', env.DC_REC_COOK_PATH);
+  // Startup diagnostic: cook.sh must exist and be executable (plan config rule).
+  try {
+    accessSync(cookScriptPath, fsConstants.X_OK);
+  } catch {
+    throw new DcRecError('cook_binary_missing', `cook.sh not found or not executable at ${cookScriptPath}`);
+  }
 
+  const rawDir = path.join(runtimeDir, 'raw');
   const store = new FileMeetingStateStore(runtimeDir);
   // Live Discord recording is not wired yet; start/live-stop will fail loudly.
   const craig = new NotImplementedCraigAdapter();
   const recorder = new MeetingRecorder({ store, craig });
-  const cook = new RealCookRunner({ cookScriptPath });
+  const cook = new RealCookRunner({ cookScriptPath, rawDir });
   const exporter = new RecordingExporter({
     cook,
     outputRoot,
-    usersFilePathFor: (rec) => path.join(runtimeDir, 'raw', `${rec.recordingId}.ogg.users`)
+    usersFilePathFor: (rec) => path.join(rawDir, `${rec.recordingId}.ogg.users`)
   });
 
   return new RealMeetingRecorderFacade({ recorder, exporter, store });
