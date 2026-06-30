@@ -30,8 +30,7 @@ runtime dir and read/write the output root):
 | Variable | Required (real mode) | Meaning |
 |----------|----------------------|---------|
 | `DC_REC_TEST_MODE` | — | Set to `fake` to run without Discord/cook (canned responses). Omit for real mode. |
-| `DC_REC_DISCORD_TOKEN` | yes | The dedicated Discord bot token for `dc-rec-mcp`. Supply via env; never commit it. |
-| `DC_REC_DISCORD_APPLICATION_ID` | yes | The bot's application id. |
+| `DC_REC_DISCORD_TOKEN` | yes | The dedicated Discord bot token for `dc-rec-mcp`. `DISCORD_BOT_TOKEN` is also accepted as a fallback. Supply via env; never commit it. |
 | `DC_REC_RUNTIME_DIR` | yes (absolute) | Where Craig raw files + per-recording state live (`<dir>/raw/`, `<dir>/sessions/`). |
 | `DC_REC_OUTPUT_ROOT` | yes (absolute) | Canonical finalized-audio root (`<root>/<YYYY-MM>/<type>/raw audio/<YYYY-MM-DD>/`). |
 | `DC_REC_COOK_PATH` | yes (absolute) | Path to `cook.sh`. Validated as executable at startup (`cook_binary_missing` if not). |
