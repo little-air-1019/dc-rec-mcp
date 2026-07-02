@@ -71,9 +71,15 @@ export class RecordingExporter {
     }
 
     const users = this.readUsers(recording);
-    const usersByTrack = new Map<number, CraigTrackUser>(users.map((u) => [u.trackNo, u]));
-
     const outDir = rawAudioDirFor(this.outputRoot, recording.type, recording.date);
+    if (users.length === 0) {
+      mkdirSync(outDir, { recursive: true });
+      const manifest = this.buildManifest(recording, outDir, []);
+      const manifestFile = manifestPathFor(outDir);
+      writeFileSync(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+      return { rawAudioDir: outDir, manifestPath: manifestFile, tracks: [] };
+    }
+    const usersByTrack = new Map<number, CraigTrackUser>(users.map((u) => [u.trackNo, u]));
 
     let cooked;
     try {
