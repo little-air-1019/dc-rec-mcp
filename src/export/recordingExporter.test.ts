@@ -139,6 +139,20 @@ describe('successful export', () => {
     expect(result.tracks.map((t) => path.basename(t.path))).toEqual(['01-123-Air.ogg', '02-456-Bee.ogg']);
   });
 
+  it('writes an empty manifest without running cook when no speaker tracks were recorded', async () => {
+    writeUsersFile('rec1', '"0":{}\n');
+    const cook = new FakeCookRunner({ entryNames: ['1-123-Air.ogg'] });
+    const exporter = makeExporter(cook);
+
+    const result = await exporter.export(finalizedRecording({ title: 'No speakers' }));
+    const manifest = JSON.parse(readFileSync(result.manifestPath, 'utf8')) as RecordingManifest;
+
+    expect(result.tracks).toEqual([]);
+    expect(manifest.tracks).toEqual([]);
+    expect(manifest.title).toBe('No speakers');
+    expect(cook.runCalls).toEqual([]);
+  });
+
   it('falls back to track metadata when a cook entry has no matching user', async () => {
     writeUsersFile('rec1', '"0":{}\n,"1":{"id":"123","username":"air","discriminator":"0","name":"Air"}');
     // cook produced a track 2 with no user entry.

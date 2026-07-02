@@ -17,10 +17,15 @@ everything else.
 
 The MCP server, the recorder/export domain, the state store, and the local
 export pipeline are implemented and tested. The **live Discord (Eris) voice
-connection is not wired yet** — recording `start`/live-`stop` in real mode fail
-loudly until the manual two-speaker Discord end-to-end is done. `export` and
-`status` of finalized recordings work in real mode today, and the full tool
-surface works in fake mode (below).
+start/stop path is wired**: a 2026-07-02 real-mode smoke against guild
+`1501759872402722887`, voice channel `1501759873606615195` reached
+`recording`, then `stop_recording` moved the state to `finalized`.
+
+Remaining verification: the 2026-07-02 smoke had no speakers, so it produced
+zero tracks. A manual two-speaker Discord end-to-end is still needed before
+claiming speaker-track capture and summary handoff are fully verified. Empty
+recordings now skip `cook.sh` and export an empty `recording-manifest.json`
+instead. The full tool surface works in fake mode (below).
 
 ## Configuration
 
